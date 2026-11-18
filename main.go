@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -56,12 +58,22 @@ func main() {
 		listTargets()
 		return
 	}
+	if args[0] == "show" {
+		t := readTarget(key)
+		if t == "" {
+			fmt.Fprintln(os.Stderr, "[aadb] no device bound to this terminal")
+			return
+		}
+		fmt.Println(t)
+		return
+	}
 
 	// 解析 -s：显式指定则覆盖当前终端记录
 	target := readTarget(key)
+	explicit := false
 	if len(args) >= 2 && args[0] == "-s" {
 		target = args[1]
-		writeTarget(key, target, anc)
+		explicit = true
 		args = args[2:]
 	}
 
@@ -75,6 +87,19 @@ func main() {
 		target = t
 		writeTarget(key, target, anc)
 		fmt.Fprintf(os.Stderr, "[aadb] %s -> %s\n", key, target)
+	}
+
+	// 设备为 ip[:port] 形式时，未连接则先自动 connect，省去手动一步；
+	// 省略端口时与 adb 一样默认 5555，并补全后再交给 adb -s
+	target = normalizeDeviceAddr(target)
+	if err := ensureConnected(target); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	// 连接成功后再落盘，避免记住一个连不上的设备
+	if explicit {
+		writeTarget(key, target, anc)
 	}
 
 	// 以子进程方式调用原始 adb
@@ -296,20 +321,87 @@ func ageOf(t, now int64) string {
 
 // ---------- 设备枚举 ----------
 
-func pickDevice() (string, error) {
+// listDevices 返回 adb 当前可见的设备及其状态（serial -> state）
+func listDevices() map[string]string {
+	devs := make(map[string]string)
 	out, err := exec.Command("adb", "devices").Output()
 	if err != nil {
-		return "", err
+		return devs
 	}
-	var devs []string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "List of devices") {
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) >= 2 && f[1] == "device" {
-			devs = append(devs, f[0])
+		if len(f) >= 2 {
+			devs[f[0]] = f[1]
+		}
+	}
+	return devs
+}
+
+// isDeviceAddr 判断设备标识是否为 ip:port（或主机名:端口）形式
+func isDeviceAddr(target string) bool {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || host == "" {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p > 0 && p <= 65535
+}
+
+// defaultADBTCPPort 与 adb connect HOST[:PORT] 一致：省略端口时用 5555
+const defaultADBTCPPort = "5555"
+
+// normalizeDeviceAddr 把网络设备归一化为可传给 adb -s 的 host:port。
+// 与 adb connect 一致，裸 IP 视为省略端口；其他标识（emulator-5554、
+// 序列号等）原样返回，避免把普通设备误判成网络设备
+func normalizeDeviceAddr(target string) string {
+	if isDeviceAddr(target) {
+		return target
+	}
+	if net.ParseIP(target) != nil {
+		return net.JoinHostPort(target, defaultADBTCPPort)
+	}
+	return target
+}
+
+// ensureConnected 对 ip:port 形式的设备补上 adb connect：
+// 已在线（非 offline）时直接跳过，否则先连接再继续执行原命令
+func ensureConnected(target string) error {
+	if !isDeviceAddr(target) {
+		return nil
+	}
+	if state, ok := listDevices()[target]; ok && state != "offline" {
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "[aadb] connecting %s ...\n", target)
+	out, err := exec.Command("adb", "connect", target).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err != nil {
+		if msg != "" {
+			return fmt.Errorf("adb connect %s: %s", target, msg)
+		}
+		return fmt.Errorf("adb connect %s: %w", target, err)
+	}
+	// 部分 adb 版本连接失败仍返回 0，以输出判断结果
+	if !strings.Contains(msg, "connected to") {
+		if msg == "" {
+			msg = "unknown error"
+		}
+		return fmt.Errorf("adb connect %s: %s", target, msg)
+	}
+	fmt.Fprintf(os.Stderr, "[aadb] %s\n", msg)
+	return nil
+}
+
+func pickDevice() (string, error) {
+	var devs []string
+	for serial, state := range listDevices() {
+		if state == "device" {
+			devs = append(devs, serial)
 		}
 	}
 	if len(devs) == 0 {
@@ -318,6 +410,7 @@ func pickDevice() (string, error) {
 	if len(devs) == 1 {
 		return devs[0], nil
 	}
+	sort.Strings(devs) // map 遍历无序，排序保证每次展示一致
 	fmt.Println("multiple devices:")
 	for i, d := range devs {
 		fmt.Printf("  [%d] %s\n", i+1, d)

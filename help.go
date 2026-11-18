@@ -26,6 +26,7 @@ func printUsage(w io.Writer) {
 
 	printSection(w, bold, accent, "用法", [][2]string{
 		{"aadb [-s <设备>] <adb 参数...>", "在当前终端绑定的设备上执行 adb 命令"},
+		{"aadb show", "回显当前终端绑定的设备"},
 		{"aadb list", "查看所有终端的绑定记录"},
 		{"aadb forget", "清除当前终端的绑定"},
 		{"aadb version | -V | --version", "显示版本号"},
@@ -34,6 +35,7 @@ func printUsage(w io.Writer) {
 
 	printSection(w, bold, accent, "选项", [][2]string{
 		{"-s <设备>", "显式指定设备，并覆盖当前终端已有的绑定"},
+		{"-s <ip[:port]>", "网络设备省略端口默认 5555，未连接时自动 adb connect"},
 		{"-h, --help", "显示本帮助"},
 		{"-V, --version", "显示版本号"},
 	})
@@ -41,13 +43,16 @@ func printUsage(w io.Writer) {
 	printSection(w, bold, accent, "示例", [][2]string{
 		{"aadb shell getprop ro.build.version.release", "首次运行会列出设备供选择并记住"},
 		{"aadb -s emulator-5554 install app.apk", "指定设备，本终端后续命令自动复用"},
+		{"aadb -s 192.168.1.20 shell", "ip:port 形式会先自动 adb connect，省略端口默认 5555"},
 		{"aadb list", "查看各终端分别绑定了哪台设备"},
+		{"aadb show", "只看当前终端绑定了哪台设备"},
 		{"aadb forget", "想换设备时先解除当前绑定"},
 	})
 
 	fmt.Fprintf(w, "%s\n", bold("行为说明"))
 	for _, note := range []string{
 		"绑定按终端隔离：同一终端内自动复用，不同终端互不影响",
+		"设备标识为 ip[:port] 且尚未连接时，先自动执行 adb connect 再运行命令（省略端口默认 5555）",
 		"记录保存在 ~/aadb.cfg，终端关闭即失效；超过 30 天未更新一并清理",
 		"运行前需保证 adb 已加入 PATH",
 	} {

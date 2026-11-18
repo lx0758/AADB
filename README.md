@@ -21,6 +21,7 @@ PS C:\> aadb shell echo 第二次不用再选了        # 同一终端直接复�
 ## 特性
 
 - **按终端隔离**：同一终端内自动复用，不同终端窗口/标签页互不影响
+- **网络设备自动连接**：`-s ip[:port]` 尚未连接时自动执行 `adb connect`（省略端口默认 5555），省去手动一步
 - **终端关闭即失效**：绑定跟着终端走，终端关了下次重新选（不是按时间过期）
 - **记录存在 `~/aadb.cfg`**，超过 30 天未更新自动清理
 - **零依赖**：单个静态二进制，只要求 `adb` 在 `PATH` 中
@@ -40,6 +41,7 @@ make release        # 交叉编译 linux/windows，产物在 dist/
 ```bash
 aadb <adb 参数...>          # 在当前终端绑定的设备上执行 adb，首次会提示选择
 aadb -s <设备> <adb 参数>    # 显式指定设备，并覆盖当前终端的绑定
+aadb show                   # 回显当前终端绑定的设备
 aadb list                   # 查看各终端分别绑定了哪台设备
 aadb forget                 # 解除当前终端的绑定（换设备前先执行）
 aadb help                   # 显示帮助
@@ -51,7 +53,10 @@ aadb -V                     # 显示版本号
 ```bash
 aadb shell getprop ro.build.version.release   # 首次运行选设备并记住
 aadb -s emulator-5554 install app.apk         # 指定设备，本终端后续自动复用
+aadb -s 192.168.1.20 shell                     # 未连接时会先自动 adb connect
+aadb -s 192.168.1.20:5556 shell               # 显式指定端口
 aadb logcat -s MyTag                           # 不用再写 -s
+aadb show                                      # 回显当前终端绑定的是哪台设备
 aadb list
 aadb forget
 ```
